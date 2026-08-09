@@ -1,0 +1,149 @@
+services:
+  # --- VPN-шлюз: через него идёт исходящий интернет-трафик backend и bot ---
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: pridprom_gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=mullvad
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - SERVER_COUNTRIES=${VPN_SERVER_COUNTRIES:-Netherlands}
+      - FIREWALL_OUTBOUND_SUBNETS=${DOCKER_SUBNET:-172.28.0.0/16}
+    # backend и bot публикуют порты через gluetun, т.к. живут в его network namespace
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    networks:
+      - app_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- https://am.i.mullvad.net/connected || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: pridprom_postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-pridprom}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-pridprom}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pridprom}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: pridprom_redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: pridprom_chromadb
+    volumes:
+      - chroma_data:/chroma/chroma
+    networks:
+      - app_net
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pridprom_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - app_net
+    restart: unless-stopped
+    # опционально: раскомментировать для доступа к GPU (нужен nvidia-container-toolkit на хосте)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # разово подтягивает модель после старта ollama, затем завершается
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: pridprom_ollama_pull
+    entrypoint: ["sh", "-c", "sleep 5 && ollama pull ${OLLAMA_MODEL:-qwen2.5:7b}"]
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    networks:
+      - app_net
+    depends_on:
+      - ollama
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: pridprom_backend
+    network_mode: "service:gluetun"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-pridprom}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pridprom}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CHROMADB_URL=http://chromadb:8000
+      - OLLAMA_URL=http://ollama:11434
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - RAG_SCORE_THRESHOLD=${RAG_SCORE_THRESHOLD:-0.65}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+    depends_on:
+      - gluetun
+      - postgres
+      - redis
+      - chromadb
+      - ollama
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: pridprom_bot
+    network_mode: "service:gluetun"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - BACKEND_URL=http://localhost:8000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-pridprom}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pridprom}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+    depends_on:
+      - gluetun
+      - backend
+    restart: unless-stopped
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:
+  ollama_data:
