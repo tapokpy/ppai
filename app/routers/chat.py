@@ -9,6 +9,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     query: str
     user_id: str | None = None
+    category: str = "general"
 
 
 class ChatResponse(BaseModel):
@@ -18,5 +19,5 @@ class ChatResponse(BaseModel):
 
 @router.post("/query", response_model=ChatResponse)
 async def chat_query(request: ChatRequest) -> ChatResponse:
-    result = await route_query(request.query)
+    result = await route_query(request.query, category=request.category)
     return ChatResponse(**result)
