@@ -14,6 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - backend
 
   redis:
     image: redis:7-alpine
@@ -26,6 +28,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - backend
 
   ollama:
     image: ollama/ollama:latest
@@ -33,6 +37,102 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    networks:
+      - backend
+
+  # --- Full stack (opt-in via `docker compose --profile full up -d`) ---
+  # Routes ONLY Anthropic Claude API calls through a Mullvad VPN tunnel via
+  # this Gluetun sidecar's built-in HTTP proxy. Telegram/Postgres/Redis/Ollama
+  # traffic stays direct. See VPN_DEPLOYMENT.md for setup and verification.
+  #
+  # IMPORTANT: never add `network_mode: service:gluetun` to api/bot below -
+  # that would force ALL traffic (including Telegram) through the VPN, which
+  # is exactly the anti-pattern this split-tunnel setup avoids.
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: mullvad
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${MULLVAD_WIREGUARD_PRIVATE_KEY}
+      WIREGUARD_ADDRESSES: ${MULLVAD_WIREGUARD_ADDRESSES}
+      SERVER_COUNTRIES: ${MULLVAD_SERVER_COUNTRIES:-Sweden}
+      FIREWALL: "on"
+      HTTPPROXY: "on"
+      # NOTE: verify this env var name against the Gluetun version you deploy -
+      # it has changed across releases (e.g. HTTPPROXY_PORT in older images).
+      HTTPPROXY_LISTENING_ADDRESS: ":8888"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - frontend
+    profiles:
+      - full
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      ANTHROPIC_PROXY_URL: http://gluetun:8888
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      gluetun:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    profiles:
+      - full
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m app.bot.main
+    env_file: .env
+    environment:
+      ANTHROPIC_PROXY_URL: http://gluetun:8888
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      gluetun:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+    profiles:
+      - full
+
+networks:
+  # api/bot + gluetun + internet access.
+  frontend:
+    driver: bridge
+  # postgres/redis/ollama + api/bot (multi-homed); no route to the internet.
+  backend:
+    driver: bridge
+    internal: true
 
 volumes:
   postgres_data:

@@ -415,7 +415,12 @@ OCR: OCRmyPDF
 
 Локальная LLM: Ollama (Qwen2.5:7b)
 
-Облачная LLM: Anthropic Claude (прямой вызов, без промежуточных шлюзов)
+Облачная LLM: Anthropic Claude — вызов напрямую через официальный Anthropic SDK,
+без LLM-шлюза/абстракции (решение отказаться от LiteLLM см. в OPEN_SOURCE_STRATEGY.md,
+раздел 9 «Безопасность зависимостей»). На сетевом уровне исходящий трафик к Claude API
+может проксироваться через Gluetun/Mullvad VPN (split-tunneling, см.
+VPN_DEPLOYMENT.md) — это изоляция egress-IP, а не замена прямому вызову SDK;
+Telegram/PostgreSQL/Redis/Ollama трафик через VPN не идёт.
 
 Observability: Langfuse
 

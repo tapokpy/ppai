@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     CLOUD_MODEL_NAME: str = "claude-3-5-sonnet-20241022"
     CLOUD_DAILY_LIMIT_PER_USER: int = 50
 
+    # VPN / Egress Proxy (Gluetun + Mullvad) - Anthropic Claude calls only.
+    # See VPN_DEPLOYMENT.md. Empty by default (no proxy) for local dev.
+    ANTHROPIC_PROXY_URL: str = ""
+
     # RAG
     RAG_SCORE_THRESHOLD: float = 0.65
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"

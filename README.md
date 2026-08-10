@@ -37,6 +37,19 @@ uvicorn app.main:app --reload
 
 Проверка: `curl http://localhost:8000/health`
 
+## Docker Compose (полный стек, опционально)
+
+Помимо `postgres`/`redis`/`ollama`, есть opt-in набор сервисов
+(`api`, `bot`, `gluetun`) для запуска всего приложения в контейнерах с
+VPN split-tunneling для трафика к Anthropic Claude:
+
+```bash
+docker compose --profile full up -d
+```
+
+Подробности (архитектура, настройка Mullvad/Gluetun, чек-лист проверки) — в
+[`VPN_DEPLOYMENT.md`](VPN_DEPLOYMENT.md).
+
 ## Тесты
 
 ```bash
@@ -53,3 +66,4 @@ pytest --cov=app --cov-report=term
 | `OPEN_SOURCE_STRATEGY.md` | Выбор Open Source компонентов, стратегия RAG |
 | `AUTONOMOUS_EXECUTION.md` | Пошаговый план разработки (9 шагов) |
 | `DEVELOPMENT_TOOLS.md` | Code-review агент, `.claude/skills/` |
+| `VPN_DEPLOYMENT.md` | Docker + Gluetun/Mullvad VPN split-tunneling для Anthropic Claude |
